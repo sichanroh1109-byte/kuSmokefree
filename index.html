@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KU-SmokeFree | 고려대 문과캠퍼스 간접흡연 회피 경로</title>
+  
+  <!-- Tailwind CSS (스타일링용) -->
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <!-- Leaflet CSS & JS (지도 구현용) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    #map { height: 100vh; width: 100%; }
+    .sidebar { z-index: 1000; }
+  </style>
+</head>
+<body class="bg-gray-50 flex h-screen overflow-hidden m-0">
+
+  <!-- 좌측 사이드바 제어 영역 -->
+  <div class="sidebar w-96 bg-white shadow-xl flex flex-col h-full relative p-6 justify-between">
+    <div>
+      <!-- 헤더 로고 및 다크모드 버튼 인터페이스 -->
+      <div class="flex justify-between items-center mb-6">
+        <div>
+          <h1 class="text-xl font-bold text-emerald-600 flex items-center gap-1">
+            🌱 KU-SmokeFree
+          </h1>
+          <p class="text-xs text-gray-500">고려대 문과캠 안심 우회 경로</p>
+        </div>
+        <button class="p-2 rounded-full hover:bg-gray-100 text-gray-600">🌙</button>
+      </div>
+
+      <!-- 출발지 / 목적지 선택 드롭다운 -->
+      <div class="space-y-3 mb-6">
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">🟢 출발지 선택</label>
+          <select id="start-select" class="w-full p-2.5 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+            <option value="">출발지를 선택해주세요...</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">🔴 목적지 선택</label>
+          <select id="end-select" class="w-full p-2.5 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+            <option value="">목적지를 선택해주세요...</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- 추천 숏컷 버튼 -->
+      <div class="flex gap-2 flex-wrap mb-6">
+        <button onclick="quickSelect('loc_18', 'loc_20')" class="text-xs bg-gray-100 hover:bg-emerald-50 text-gray-700 hover:text-emerald-700 px-2.5 py-1.5 rounded-md border border-gray-200">안암역 ➔ 우당교양관</button>
+        <button onclick="quickSelect('loc_03', 'loc_23')" class="text-xs bg-gray-100 hover:bg-emerald-50 text-gray-700 hover:text-emerald-700 px-2.5 py-1.5 rounded-md border border-gray-200">정문 ➔ 중앙도서관</button>
+      </div>
+
+      <!-- 하단 탭 메뉴 버튼 그룹 -->
+      <div class="border-t border-gray-100 pt-4 flex justify-around text-sm font-medium text-gray-500">
+        <button class="text-emerald-600 border-b-2 border-emerald-600 pb-2 px-1 flex items-center gap-1">🗺️ 우회 경로</button>
+        <button class="hover:text-gray-800 pb-2 px-1 flex items-center gap-1">🚬 흡연구역 관리</button>
+        <button class="hover:text-gray-800 pb-2 px-1 flex items-center gap-1">⚠️ 제보하기</button>
+      </div>
+
+      <!-- 메인 안내 메시지 및 결과창 영역 -->
+      <div id="status-box" class="mt-8 text-center py-12 px-4 border-2 border-dashed border-gray-100 rounded-xl">
+        <span class="text-3xl block mb-3">🧭</span>
+        <h3 class="text-sm font-bold text-gray-700 mb-1">출발지와 목적지를 선택해주세요</h3>
+        <p class="text-xs text-gray-400 leading-relaxed">문과 캠퍼스 내 지정 및 비지정 흡연구역 10m를 우회하는 청정 보행 경로를 찾아드립니다.</p>
+      </div>
+    </div>
+
+    <!-- 푸터 -->
+    <div class="text-center text-[10px] text-gray-400">
+      &copy; KU-SmokeFree 프로젝트팀
+    </div>
+  </div>
+
+  <!-- 우측 지도 영역 -->
+  <div id="map" class="flex-1 z-0"></div>
+
+  <script>
+    // 1. 지도 초기화 (고려대 본관 중심 좌표 설정)
+    const map = L.map('map').setView([37.5887, 127.0329], 16);
+
+    // CARTO Positron 밝은 톤 배경 지도 레이어 추가
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; OpenStreetMap &copy; CARTO'
+    }).addTo(map);
+
+    let locationsData = [];
+
+    // 2. data.json 로드하여 UI 및 지도에 반영하기
+    fetch('data.json')
+      .then(res => res.json())
+      .then(data => {
+        locationsData = data.locations;
+        
+        // 드롭다운 옵션 동적 추가
+        const startSelect = document.getElementById('start-select');
+        const endSelect = document.getElementById('end-select');
+
+        data.locations.forEach(loc => {
+          const opt1 = new Option(loc.name, loc.id);
+          const opt2 = new Option(loc.name, loc.id);
+          startSelect.add(opt1);
+          endSelect.add(opt2);
+        });
+
+        // 흡연구역 데이터를 지도 위에 붉은 원(10m 반경 위험 구역)으로 표시
+        data.smoking_zones.forEach(zone => {
+          L.circle([zone.lat, zone.lng], {
+            color: 'red',
+            fillColor: '#f03',
+            fillOpacity: 0.2,
+            radius: 10 // 10m 회피 반경 설정
+          }).addTo(map).bindPopup(`<b>${zone.name}</b><br>간접흡연 위험 구역 (10m)`);
+        });
+      })
+      .catch(err => console.error("데이터 로드 실패:", err));
+
+    // 3. 퀵 메뉴 단축키 함수
+    function quickSelect(startId, endId) {
+      document.getElementById('start-select').value = startId;
+      document.getElementById('end-select').value = endId;
+      calculateRoute();
+    }
+
+    // 드롭다운 변경 이벤트 감지
+    document.getElementById('start-select').addEventListener('change', calculateRoute);
+    document.getElementById('end-select').addEventListener('change', calculateRoute);
+
+    // 4. 경로 탐색 데모 핸들러 (선택 시 상태창 문구 변경 및 마커 업데이트)
+    let tempMarkers = [];
+    function calculateRoute() {
+      const startId = document.getElementById('start-select').value;
+      const endId = document.getElementById('end-select').value;
+
+      // 기존 마커 초기화
+      tempMarkers.forEach(m => map.removeLayer(m));
+      tempMarkers = [];
+
+      if (startId && endId) {
+        const start = locationsData.find(l => l.id === startId);
+        const end = locationsData.find(l => l.id === endId);
+
+        if (start && end) {
+          // 출발지와 목적지 핀 찍기
+          const m1 = L.marker([start.lat, start.lng]).addTo(map).bindPopup("출발지");
+          const m2 = L.marker([end.lat, end.lng]).addTo(map).bindPopup("목적지");
+          tempMarkers.push(m1, m2);
+
+          // 화면 포커스 맞추기
+          const group = new L.featureGroup([m1, m2]);
+          map.fitBounds(group.getBounds().pad(0.2));
+
+          // 안내 메시지 변경
+          document.getElementById('status-box').innerHTML = `
+            <span class="text-3xl block mb-3">✨</span>
+            <h3 class="text-sm font-bold text-emerald-700 mb-1">안전 경로 탐색 완료</h3>
+            <p class="text-xs text-gray-600"><b>${start.name}</b> 에서 <b>${end.name}</b> 까지의 흡연구역 회피 경로를 지도에 표시했습니다.</p>
+          `;
+        }
+      }
+    }
+  </script>
+</body>
+</html>
